@@ -41,21 +41,13 @@ def get_sheet():
         _sheet = gspread.authorize(creds).open(SHEET_NAME).sheet1
         _sheet_ts = now
         if _sheet.row_count==0 or _sheet.cell(1,1).value is None:
-            _sheet.insert_row(['日期','里程(km)','加油(L)','金額(元)','油價(元/L)','油耗(L/100km)','行駛距離(km)'],1)
+            _sheet.insert_row(['日期','行駛里程(km)','加油(L)','金額(元)','油價(元/L)','油耗(L/100km)'],1)
     return _sheet
 
-def get_last_odometer():
-    for r in reversed(get_sheet().get_all_records()):
-        try:
-            km = float(r.get('里程(km)',0))
-            if km > 0: return km
-        except: pass
-    return None
-
-def save_record(odometer, liters, cost, economy, distance):
+def save_record(distance, liters, cost, economy):
     date = datetime.now(TW_TZ).strftime('%Y/%m/%d %H:%M')
     price = round(cost/liters,1) if liters>0 else 0
-    get_sheet().append_row([date,odometer,liters,cost,price,economy,distance])
+    get_sheet().append_row([date,distance,liters,cost,price,economy])
     return date
 
 def get_stats():
@@ -63,12 +55,11 @@ def get_stats():
     if not records: return None
     tl = sum(float(r.get('加油(L)',0)) for r in records)
     tc = sum(float(r.get('金額(元)',0)) for r in records)
-    td = sum(float(r.get('行駛距離(km)',0)) for r in records)
+    td = sum(float(r.get('行駛里程(km)',0)) for r in records)
     eco = [float(r['油耗(L/100km)']) for r in records
            if r.get('油耗(L/100km)') and float(r.get('油耗(L/100km)',0))>0]
     return {
         'count': len(records),
-        'eco_count': len(eco),
         'avg':   round(sum(eco)/len(eco),2) if eco else None,
         'best':  round(min(eco),2) if eco else None,
         'worst': round(max(eco),2) if eco else None,
@@ -97,51 +88,36 @@ async def _proc(update, context, text):
         context.user_data.pop('waiting_fuel')
         parts = text.replace('/', ' ').replace(',', '').split()
         if len(parts) < 3:
-            await update.message.reply_text('格式錯誤！請輸入三個數字：\n里程 公升 金額\n例如：12500 35.5 1200', reply_markup=MAIN_KEYBOARD); return
-        try: odometer=float(parts[0]); liters=float(parts[1]); cost=float(parts[2])
+            await update.message.reply_text('格式錯誤！請輸入三個數字：\n行駛里程 公升 金額\n例如：300 35.5 1200', reply_markup=MAIN_KEYBOARD); return
+        try: distance=float(parts[0]); liters=float(parts[1]); cost=float(parts[2])
         except:
-            await update.message.reply_text('請輸入數字，例如：12500 35.5 1200', reply_markup=MAIN_KEYBOARD); return
-        if liters<=0 or cost<=0:
-            await update.message.reply_text('公升數和金額必須大於 0', reply_markup=MAIN_KEYBOARD); return
-        last_km = get_last_odometer()
-        if last_km and odometer <= last_km:
-            await update.message.reply_text(f'⚠️ 里程（{odometer:,.0f}）不能小於上次（{last_km:,.0f}）', reply_markup=MAIN_KEYBOARD); return
-        if last_km and odometer > last_km:
-            distance = round(odometer - last_km, 1)
-            economy  = round((liters/distance)*100, 2)
-            eco_text = f'🛢️ 本次油耗：{economy} L/100km\n📏 行駛距離：{distance:,.0f} km'
-        else:
-            distance=0; economy=0
-            eco_text='ℹ️ 首次記錄，下次加油後才能計算油耗'
-        date = save_record(odometer, liters, cost, economy, distance)
+            await update.message.reply_text('請輸入數字，例如：300 35.5 1200', reply_markup=MAIN_KEYBOARD); return
+        if distance<=0 or liters<=0 or cost<=0:
+            await update.message.reply_text('所有數字必須大於 0', reply_markup=MAIN_KEYBOARD); return
+        economy = round((liters/distance)*100, 2)
+        date = save_record(distance, liters, cost, economy)
         await update.message.reply_text(
-            f'✅ 記錄完成！\n📅 {date}\n🛣️ 里程：{odometer:,.0f} km\n⛽ 加油：{liters} L\n💰 金額：NT${cost:,.0f}\n💧 油價：NT${round(cost/liters,1)}/L\n{eco_text}',
+            f'✅ 記錄完成！\n📅 {date}\n📏 行駛：{distance:,.0f} km\n⛽ 加油：{liters} L\n💰 金額：NT${cost:,.0f}\n💧 油價：NT${round(cost/liters,1)}/L\n🛢️ 油耗：{economy} L/100km',
             reply_markup=MAIN_KEYBOARD); return
 
     if text == '⛽ 加油記錄':
-        last_km = get_last_odometer()
-        hint = f'（上次里程：{last_km:,.0f} km）' if last_km else '（首次記錄）'
         context.user_data['waiting_fuel'] = True
         await update.message.reply_text(
-            f'📝 請輸入加油資訊 {hint}\n\n格式：`里程 公升 金額`\n例如：`12500 35.5 1200`',
+            '📝 請輸入加油資訊\n\n格式：`行駛里程 公升 金額`\n例如：`300 35.5 1200`\n\n（行駛里程 = 本次加油前所開的公里數）',
             parse_mode='Markdown', reply_markup=MAIN_KEYBOARD); return
 
     if text == '📊 油耗查詢':
         s = get_stats()
-        if not s:
-            await update.message.reply_text('尚無記錄', reply_markup=MAIN_KEYBOARD); return
-        lines = [f'📊 油耗統計（共加油 {s["count"]} 次）\n']
+        if not s: await update.message.reply_text('尚無記錄', reply_markup=MAIN_KEYBOARD); return
+        lines = [f'📊 油耗統計（共 {s["count"]} 次）\n']
         if s['avg'] is not None:
-            lines.append(f'🛢️ 最近一次：{s["last"]} L/100km')
-            lines.append(f'📈 平均油耗：{s["avg"]} L/100km')
-            lines.append(f'🏆 最省油：{s["best"]} L/100km')
-            lines.append(f'📉 最耗油：{s["worst"]} L/100km')
-        else:
-            lines.append('ℹ️ 目前只有 1 筆記錄，油耗計算需至少 2 次加油\n（第 2 次加油後自動計算）')
-        lines.append('')
-        lines.append(f'⛽ 累計加油：{s["tl"]} L')
-        if s['td'] > 0: lines.append(f'📏 累計里程：{s["td"]:,.0f} km')
-        lines.append(f'💰 累計花費：NT${s["tc"]:,.0f}')
+            lines += [f'🛢️ 最近一次：{s["last"]} L/100km',
+                      f'📈 平均油耗：{s["avg"]} L/100km',
+                      f'🏆 最省油：{s["best"]} L/100km',
+                      f'📉 最耗油：{s["worst"]} L/100km', '']
+        lines += [f'⛽ 累計加油：{s["tl"]} L',
+                  f'📏 累計里程：{s["td"]:,.0f} km',
+                  f'💰 累計花費：NT${s["tc"]:,.0f}']
         await update.message.reply_text('\n'.join(lines), reply_markup=MAIN_KEYBOARD); return
 
     if text == '📋 歷史紀錄':
@@ -149,15 +125,14 @@ async def _proc(update, context, text):
         if not records: await update.message.reply_text('尚無記錄', reply_markup=MAIN_KEYBOARD); return
         lines = ['📋 最近 5 次：\n']
         for r in reversed(records):
-            eco = r.get('油耗(L/100km)',0)
-            eco_str = f'{eco} L/100km' if float(eco or 0)>0 else '（首次）'
-            lines.append(f"📅 {str(r.get('日期',''))[:10]}  ⛽{r.get('加油(L)',0)}L  🛢️{eco_str}")
+            eco = r.get('油耗(L/100km)','-')
+            lines.append(f"📅 {str(r.get('日期',''))[:10]}  📏{r.get('行駛里程(km)',0)}km  ⛽{r.get('加油(L)',0)}L  🛢️{eco}L/100km")
         await update.message.reply_text('\n'.join(lines), reply_markup=MAIN_KEYBOARD); return
 
     if text in ['❓ 說明','說明']:
         await update.message.reply_text(
-            '⛽ 加油記錄：一次輸入「里程 公升 金額」\n例如：12500 35.5 1200\n\n'
-            '🛢️ 油耗以 L/100km 計算（越小越省油）\n首次記錄無法計算，第 2 次加油後自動計算\n\n'
+            '⛽ 加油記錄：輸入「行駛里程 公升 金額」\n例如：300 35.5 1200\n\n'
+            '行駛里程 = 這次加油前跑了幾公里\n🛢️ 油耗自動以 L/100km 計算\n\n'
             '📊 油耗查詢：統計含平均油耗\n📋 歷史紀錄：最近 5 次',
             reply_markup=MAIN_KEYBOARD); return
 
