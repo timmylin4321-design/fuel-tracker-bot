@@ -64,7 +64,7 @@ def get_stats():
         'best':  round(min(eco),2) if eco else None,
         'worst': round(max(eco),2) if eco else None,
         'last':  round(eco[-1],2) if eco else None,
-        'tl': round(tl,1), 'tc': round(tc,0), 'td': round(td,0)
+        'tl': round(tl,1), 'tc': round(tc,0), 'td': round(td,1)
     }
 
 def get_recent(n=5):
@@ -88,22 +88,24 @@ async def _proc(update, context, text):
         context.user_data.pop('waiting_fuel')
         parts = text.replace('/', ' ').replace(',', '').split()
         if len(parts) < 3:
-            await update.message.reply_text('格式錯誤！請輸入三個數字：\n行駛里程 公升 金額\n例如：300 35.5 1200', reply_markup=MAIN_KEYBOARD); return
+            await update.message.reply_text('格式錯誤！請輸入三個數字：\n行駛里程 公升 金額\n例如：300.5 35.5 1200', reply_markup=MAIN_KEYBOARD); return
         try: distance=float(parts[0]); liters=float(parts[1]); cost=float(parts[2])
         except:
-            await update.message.reply_text('請輸入數字，例如：300 35.5 1200', reply_markup=MAIN_KEYBOARD); return
+            await update.message.reply_text('請輸入數字，例如：300.5 35.5 1200', reply_markup=MAIN_KEYBOARD); return
         if distance<=0 or liters<=0 or cost<=0:
             await update.message.reply_text('所有數字必須大於 0', reply_markup=MAIN_KEYBOARD); return
         economy = round((liters/distance)*100, 2)
         date = save_record(distance, liters, cost, economy)
+        # 顯示公里數：整數不加小數點，有小數則顯示
+        km_str = f'{distance:g}'
         await update.message.reply_text(
-            f'✅ 記錄完成！\n📅 {date}\n📏 行駛：{distance:,.0f} km\n⛽ 加油：{liters} L\n💰 金額：NT${cost:,.0f}\n💧 油價：NT${round(cost/liters,1)}/L\n🛢️ 油耗：{economy} L/100km',
+            f'✅ 記錄完成！\n📅 {date}\n📏 行駛：{km_str} km\n⛽ 加油：{liters} L\n💰 金額：NT${cost:,.0f}\n💧 油價：NT${round(cost/liters,1)}/L\n🛢️ 油耗：{economy} L/100km',
             reply_markup=MAIN_KEYBOARD); return
 
     if text == '⛽ 加油記錄':
         context.user_data['waiting_fuel'] = True
         await update.message.reply_text(
-            '📝 請輸入加油資訊\n\n格式：`行駛里程 公升 金額`\n例如：`300 35.5 1200`\n\n（行駛里程 = 本次加油前所開的公里數）',
+            '📝 請輸入加油資訊\n\n格式：`行駛里程 公升 金額`\n例如：`300.5 35.5 1200`\n\n（行駛里程支援小數點，公升也可輸入小數）',
             parse_mode='Markdown', reply_markup=MAIN_KEYBOARD); return
 
     if text == '📊 油耗查詢':
@@ -116,7 +118,7 @@ async def _proc(update, context, text):
                       f'🏆 最省油：{s["best"]} L/100km',
                       f'📉 最耗油：{s["worst"]} L/100km', '']
         lines += [f'⛽ 累計加油：{s["tl"]} L',
-                  f'📏 累計里程：{s["td"]:,.0f} km',
+                  f'📏 累計里程：{s["td"]:g} km',
                   f'💰 累計花費：NT${s["tc"]:,.0f}']
         await update.message.reply_text('\n'.join(lines), reply_markup=MAIN_KEYBOARD); return
 
@@ -126,14 +128,14 @@ async def _proc(update, context, text):
         lines = ['📋 最近 5 次：\n']
         for r in reversed(records):
             eco = r.get('油耗(L/100km)','-')
-            lines.append(f"📅 {str(r.get('日期',''))[:10]}  📏{r.get('行駛里程(km)',0)}km  ⛽{r.get('加油(L)',0)}L  🛢️{eco}L/100km")
+            km = r.get('行駛里程(km)',0)
+            lines.append(f"📅 {str(r.get('日期',''))[:10]}  📏{km}km  ⛽{r.get('加油(L)',0)}L  🛢️{eco}L/100km")
         await update.message.reply_text('\n'.join(lines), reply_markup=MAIN_KEYBOARD); return
 
     if text in ['❓ 說明','說明']:
         await update.message.reply_text(
-            '⛽ 加油記錄：輸入「行駛里程 公升 金額」\n例如：300 35.5 1200\n\n'
-            '行駛里程 = 這次加油前跑了幾公里\n🛢️ 油耗自動以 L/100km 計算\n\n'
-            '📊 油耗查詢：統計含平均油耗\n📋 歷史紀錄：最近 5 次',
+            '⛽ 加油記錄：輸入「行駛里程 公升 金額」\n例如：300.5 35.5 1200\n（里程和公升皆支援小數點）\n\n'
+            '🛢️ 油耗以 L/100km 計算\n📊 油耗查詢：統計\n📋 歷史紀錄：最近 5 次',
             reply_markup=MAIN_KEYBOARD); return
 
     await update.message.reply_text('請點選下方按鈕', reply_markup=MAIN_KEYBOARD)
